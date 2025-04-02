@@ -1,5 +1,26 @@
 #include "main.h"
 #include "insights/logging/logging.h"
+#include "insights/utilities/utilities.h"
+
+using namespace insights;
+using namespace insights::logging;
+
+// Define some values to track
+int getTemperature() {
+    // Implementation to get temperature from sensor
+    return 25;
+}
+
+// Example function to get sensor readings
+float getBatteryVoltage() {
+    return pros::battery::get_voltage() / 1000.0f;  // Convert millivolts to volts
+}
+
+// Track motor temperature
+int getMotorTemperature(int port) {
+    pros::Motor motor(port);
+    return motor.get_temperature();
+}
 
 void initialize()
 {
@@ -8,18 +29,39 @@ void initialize()
     // Example: pros::Motor motor(1);
     // motor.move_velocity(100);
     pros::lcd::initialize();
-    pros::lcd::set_text(1, "Robot is initializing...");
-    nlohmann::json json_data;
-    json_data["robot"] = "VEX V5";
-    json_data["status"] = "initializing";
-    json_data["timestamp"] = pros::millis();
-    // Initialize logging
-    insights::logging::logJSON(json_data);
 
-    char buffer[1024];
-    insights::logging::readJSONFromSDCard(buffer, sizeof(buffer));
-    std::cout << "Read from SD card: " << buffer << std::endl;
-    pros::lcd::set_text(2, buffer);
+    // Initialize the logger
+    auto& logger = Logger::getInstance();
+    
+    // Configure logger
+    logger.setSDCardPath("/usd/");
+    logger.setTimeSeriesFileName("robot_data.json");
+    logger.enableFileOutput(true);
+    utilities::isMotor(1);
+    // Register values to track
+    // Method 1: Using the trackValue template method
+    logger.trackValue<int>(
+        "temperature", 
+        getTemperature, 
+        "System temperature in celsius", 
+        std::chrono::seconds(30)
+    );
+    
+    // Method 2: Using the convenience macros
+    TRACK_FLOAT("battery_voltage", getBatteryVoltage, 5000); // Every 5 seconds
+    
+    // Lambda expressions can also be used
+    TRACK_BOOL("is_charging", []() { return true; }, 10000); // Every 10 seconds
+    
+    // Track motor temperatures for specific motors
+    TRACK_INT("drive_left_temp", []{ return getMotorTemperature(1); }, 10000);
+    TRACK_INT("drive_right_temp", []{ return getMotorTemperature(2); }, 10000);
+    
+    // Start the time series logging (this launches a background thread)
+    logger.startTimeSeriesLogging();
+
+    LOG_INFO("Robot initialization complete");
+
 }
 
 /**
@@ -27,7 +69,10 @@ void initialize()
  * the VEX Competition Switch, following either autonomous or opcontrol. When
  * the robot is enabled, this task will exit.
  */
-void disabled() {}
+void disabled() {
+    // Stop logging when robot is disabled
+    insights::logging::Logger::getInstance().stopTimeSeriesLogging();
+}
 
 /**
  * Runs after initialize(), and before autonomous when connected to the Field
