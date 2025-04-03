@@ -5,19 +5,24 @@
 using namespace insights;
 using namespace insights::logging;
 
+pros::Motor motor(1); // Replace with your motor port
+
 // Define some values to track
-int getTemperature() {
+int getTemperature()
+{
     // Implementation to get temperature from sensor
     return 25;
 }
 
 // Example function to get sensor readings
-float getBatteryVoltage() {
-    return pros::battery::get_voltage() / 1000.0f;  // Convert millivolts to volts
+float getBatteryVoltage()
+{
+    return pros::battery::get_voltage() / 1000.0f; // Convert millivolts to volts
 }
 
 // Track motor temperature
-int getMotorTemperature(int port) {
+int getMotorTemperature(int port)
+{
     pros::Motor motor(port);
     return motor.get_temperature();
 }
@@ -31,37 +36,42 @@ void initialize()
     pros::lcd::initialize();
 
     // Initialize the logger
-    auto& logger = Logger::getInstance();
-    
+    auto &logger = Logger::getInstance();
     // Configure logger
     logger.setSDCardPath("/usd/");
     logger.setTimeSeriesFileName("robot_data.json");
     logger.enableFileOutput(true);
-    utilities::isMotor(1);
+    logger.clearLogFile();
+    logger.clearTimeSeriesFile();
     // Register values to track
     // Method 1: Using the trackValue template method
+
     logger.trackValue<int>(
-        "temperature", 
-        getTemperature, 
-        "System temperature in celsius", 
-        std::chrono::seconds(30)
-    );
-    
-    // Method 2: Using the convenience macros
-    TRACK_FLOAT("battery_voltage", getBatteryVoltage, 5000); // Every 5 seconds
-    
-    // Lambda expressions can also be used
-    TRACK_BOOL("is_charging", []() { return true; }, 10000); // Every 10 seconds
-    
-    // Track motor temperatures for specific motors
-    TRACK_INT("drive_left_temp", []{ return getMotorTemperature(1); }, 10000);
-    TRACK_INT("drive_right_temp", []{ return getMotorTemperature(2); }, 10000);
-    
+        "motor_voltage",
+        []() -> int
+        {
+            return motor.get_actual_velocity();
+        },
+        "VOLTAGE",
+        std::chrono::seconds(1));
+
     // Start the time series logging (this launches a background thread)
     logger.startTimeSeriesLogging();
 
     LOG_INFO("Robot initialization complete");
 
+    for (int i = 0; i < 60; i++)
+    {
+        motor.move(i);
+        pros::delay(100);
+    } // Simulate motor movement
+    insights::logging::Logger::getInstance().stopTimeSeriesLogging();
+    motor.move(0);
+    std::cout << "Motor test complete" << std::endl;
+    char buffer[10240]; // 10 KB buffer for JSON data
+    logger.readJSONFromSDCard(buffer, sizeof(buffer));
+    std::cout << "Read from SD card: " << buffer << std::endl;
+    pros::lcd::print(2, buffer);
 }
 
 /**
@@ -69,9 +79,9 @@ void initialize()
  * the VEX Competition Switch, following either autonomous or opcontrol. When
  * the robot is enabled, this task will exit.
  */
-void disabled() {
+void disabled()
+{
     // Stop logging when robot is disabled
-    insights::logging::Logger::getInstance().stopTimeSeriesLogging();
 }
 
 /**
