@@ -1,0 +1,27 @@
+{
+  "motor_voltage": {
+    "description": "VOLTAGE",
+    "values": [
+      {
+        "timestamp": "2025-04-02 15:14:30",
+        "value": "0"
+      },
+      {
+        "timestamp": "2025-04-02 15:14:31",
+        "value": "25"
+      },
+      {
+        "timestamp": "2025-04-02 15:14:32",
+        "value": "45"
+      },
+      {
+        "timestamp": "2025-04-02 15:14:33",
+        "value": "63"
+      },
+      {
+        "timestamp": "2025-04-02 15:14:34",
+        "value": "78"
+      }
+    ]
+  }
+}

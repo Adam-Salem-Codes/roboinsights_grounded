@@ -1,0 +1,43 @@
+{
+  "name": "roboinsights",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "bin": "dist/index.js",
+  "scripts": {
+    "start": "ts-node --transpile-only index.ts",
+    "dev": "nodemon --exec ts-node index.ts",
+    "build": "tsc",
+    "prestart": "npm run build",
+    "package": "npm run build && pkg ."
+  },
+  "pkg": {
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "dist-pkg",
+    "assets": [
+      "node_modules/@serialport/bindings-cpp/build/Release/bindings.node"
+    ]
+  },
+  "author": "Adam Salem",
+  "license": "",
+  "description": "A VEX Brain connection utility with enhanced CLI",
+  "dependencies": {
+    "@types/serialport": "^8.0.5",
+    "@types/terminal-kit": "^2.5.7",
+    "boxen": "^5.1.2",
+    "chalk": "^4.1.2",
+    "figlet": "^1.7.0",
+    "serialport": "^13.0.0",
+    "terminal-kit": "^3.1.2"
+  },
+  "devDependencies": {
+    "@types/figlet": "^1.5.8",
+    "@types/node": "^20.10.5",
+    "nodemon": "^3.0.2",
+    "pkg": "^5.8.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

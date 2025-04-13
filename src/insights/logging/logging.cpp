@@ -1,5 +1,6 @@
 #include "insights/logging/logging.h"
 #include <string.h> // For string functions
+#include "main.h"   // Include main.h for pros::lcd
 
 namespace insights
 {
@@ -7,6 +8,44 @@ namespace insights
     {
         // Define the static member here - this ensures only one definition exists
         Logger *Logger::instance = nullptr;
+
+        // Static getInstance method with proper error handling
+        Logger &Logger::getInstance()
+        {
+            if (instance == nullptr)
+            {
+                try
+                {
+                    instance = new Logger();
+                    // Use try-catch for LCD functions in case they're not initialized
+                    try
+                    {
+                        pros::lcd::print(0, "Logger created");
+                    }
+                    catch (...)
+                    {
+                        // LCD might not be initialized, fall back to console output
+                        std::cout << "Logger created (LCD not available)" << std::endl;
+                    }
+                }
+                catch (const std::exception &e)
+                {
+                    try
+                    {
+                        pros::lcd::print(0, "Logger init error");
+                        pros::lcd::print(1, e.what());
+                    }
+                    catch (...)
+                    {
+                        // LCD might not be initialized, fall back to console output
+                        std::cerr << "Logger init error: " << e.what() << std::endl;
+                    }
+                    // Rethrow to allow caller to handle
+                    throw;
+                }
+            }
+            return *instance;
+        }
 
         void Logger::writeToSDCard(const char *data)
         {
@@ -159,78 +198,84 @@ namespace insights
 
         void Logger::checkAndLogTrackedValues()
         {
-            trackedValuesMutex.take();
-
-            bool needsUpdate = false;
-            auto now = std::chrono::steady_clock::now();
-            nlohmann::json timeSeriesData;
-
-            // First try to read existing data
-            char buffer[10240]; // Adjust size as needed
-
-            // Create buffer for path
-            char path[256];
-            snprintf(path, sizeof(path), "%s%s", sdCardPath.c_str(), timeSeriesFileName.c_str());
-
-            FILE *file_read = fopen(path, "r");
-            if (file_read != nullptr)
+            // Try to take the mutex with a timeout
+            if (trackedValuesMutex.take(500)) // 500ms timeout
             {
-                size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, file_read);
-                buffer[bytes_read] = '\0';
-                fclose(file_read);
+                bool needsUpdate = false;
+                auto now = std::chrono::steady_clock::now();
+                nlohmann::json timeSeriesData;
 
-                try
+                // First try to read existing data
+                char buffer[10240]; // Adjust size as needed
+
+                // Create buffer for path
+                char path[256];
+                snprintf(path, sizeof(path), "%s%s", sdCardPath.c_str(), timeSeriesFileName.c_str());
+
+                FILE *file_read = fopen(path, "r");
+                if (file_read != nullptr)
                 {
-                    timeSeriesData = nlohmann::json::parse(buffer);
+                    size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, file_read);
+                    buffer[bytes_read] = '\0';
+                    fclose(file_read);
+
+                    try
+                    {
+                        timeSeriesData = nlohmann::json::parse(buffer);
+                    }
+                    catch (...)
+                    {
+                        // If parsing fails, start with empty object
+                        timeSeriesData = nlohmann::json::object();
+                    }
                 }
-                catch (...)
+                else
                 {
-                    // If parsing fails, start with empty object
+                    // File doesn't exist yet, start with empty JSON
                     timeSeriesData = nlohmann::json::object();
+                }
+
+                // Check each tracked value
+                for (auto &pair : trackedValues)
+                {
+                    auto &value = pair.second;
+
+                    if (now - value.lastLogged >= value.interval)
+                    {
+                        // Time to log this value
+                        std::string currentValue = value.valueGetter();
+                        std::string timestamp = getTimestamp();
+
+                        // Create the entry for this value if it doesn't exist
+                        if (!timeSeriesData.contains(value.name))
+                        {
+                            timeSeriesData[value.name] = nlohmann::json::object();
+                            timeSeriesData[value.name]["description"] = value.description;
+                            timeSeriesData[value.name]["values"] = nlohmann::json::array();
+                        }
+
+                        // Add the new data point
+                        nlohmann::json dataPoint;
+                        dataPoint["timestamp"] = timestamp;
+                        dataPoint["value"] = currentValue;
+
+                        timeSeriesData[value.name]["values"].push_back(dataPoint);
+                        value.lastLogged = now;
+                        needsUpdate = true;
+                    }
+                }
+
+                trackedValuesMutex.give();
+
+                // Write back to file if any values were updated
+                if (needsUpdate)
+                {
+                    writeTimeSeriesDataToSD(timeSeriesData);
                 }
             }
             else
             {
-                // File doesn't exist yet, start with empty JSON
-                timeSeriesData = nlohmann::json::object();
-            }
-
-            // Check each tracked value
-            for (auto &pair : trackedValues)
-            {
-                auto &value = pair.second;
-
-                if (now - value.lastLogged >= value.interval)
-                {
-                    // Time to log this value
-                    std::string currentValue = value.valueGetter();
-                    std::string timestamp = getTimestamp();
-
-                    // Create the entry for this value if it doesn't exist
-                    if (!timeSeriesData.contains(value.name))
-                    {
-                        timeSeriesData[value.name] = nlohmann::json::object();
-                        timeSeriesData[value.name]["description"] = value.description;
-                        timeSeriesData[value.name]["values"] = nlohmann::json::array();
-                    }
-
-                    // Add the new data point
-                    nlohmann::json dataPoint;
-                    dataPoint["timestamp"] = timestamp;
-                    dataPoint["value"] = currentValue;
-
-                    timeSeriesData[value.name]["values"].push_back(dataPoint);
-                    value.lastLogged = now;
-                    needsUpdate = true;
-                }
-            }
-
-            trackedValuesMutex.give();
-
-            // Write back to file if any values were updated
-            if (needsUpdate)
-            {
-                writeTimeSeriesDataToSD(timeSeriesData);
+                log(LogLevel::ERROR, "Failed to acquire mutex for checking tracked values - timed out");
             }
         }
 
@@ -240,17 +285,29 @@ namespace insights
             char path[256];
             snprintf(path, sizeof(path), "%s%s", sdCardPath.c_str(), timeSeriesFileName.c_str());
 
-            std::string jsonStr = data.dump(2); // Pretty print with 2 spaces
+            try
+            {
+                std::string jsonStr = data.dump(2); // Pretty print with 2 spaces
 
-            FILE *file_write = fopen(path, "w");
-            if (file_write != nullptr)
-            {
-                fputs(jsonStr.c_str(), file_write);
-                fclose(file_write);
+                FILE *file_write = fopen(path, "w");
+                if (file_write != nullptr)
+                {
+                    fputs(jsonStr.c_str(), file_write);
+                    fclose(file_write);
+                }
+                else
+                {
+                    std::cerr << "Failed to open file for writing: " << path << std::endl;
+                    log(LogLevel::ERROR, "Failed to write time series data to SD card");
+                }
             }
-            else
+            catch (const std::exception &e)
             {
-                log(LogLevel::ERROR, "Failed to write time series data to SD card");
+                log(LogLevel::ERROR, std::string("Exception in writeTimeSeriesDataToSD: ") + e.what());
+            }
+            catch (...)
+            {
+                log(LogLevel::ERROR, "Unknown exception in writeTimeSeriesDataToSD");
             }
         }
 
@@ -306,9 +363,29 @@ namespace insights
             logToConsole = enable;
         }
 
-        void Logger::enableFileOutput(bool enable)
+        void Logger::enableFileOutput(bool enable, bool clearExistingLogFile, bool clearExistingTimeSeriesFile)
         {
             logToFile = enable;
+
+            if (enable)
+            {
+                log(LogLevel::INFO, "File logging enabled");
+
+                // Clear files if requested
+                if (clearExistingLogFile)
+                {
+                    this->clearLogFile();
+                }
+
+                if (clearExistingTimeSeriesFile)
+                {
+                    this->clearTimeSeriesFile();
+                }
+            }
+            else
+            {
+                log(LogLevel::INFO, "File logging disabled");
+            }
         }
 
         std::string Logger::getTimestamp() const
@@ -402,6 +479,15 @@ namespace insights
         void Logger::clearTimeSeriesFile()
         {
             clearFile(timeSeriesFileName);
+        }
+
+        void Logger::initializeLogger(const std::string &sdCardPath, const std::string &timeSeriesFileName, bool enableFileOutput)
+        {
+            this->setSDCardPath(sdCardPath);
+            this->setTimeSeriesFileName(timeSeriesFileName);
+            this->enableFileOutput(enableFileOutput, true, true);
+            this->clearLogFile();
+            this->clearTimeSeriesFile();
         }
     } // namespace logging
 } // namespace insights

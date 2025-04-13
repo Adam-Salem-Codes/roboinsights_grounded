@@ -13,6 +13,9 @@
 #include <functional>
 #include "insights/json/json.hpp"
 #include "pros/rtos.hpp" // Use PROS RTOS functionality instead of std::thread
+#include <mutex>
+#include <atomic>
+#include <vector>
 
 namespace insights
 {
@@ -84,16 +87,8 @@ namespace insights
             }
 
         public:
-            static Logger &getInstance()
-            {
-                if (instance == nullptr)
-                {
-                    instance = new Logger();
-                }
-                return *instance;
-            }
-
-            // Rest of class definition remains the same...
+            // Static method to get the singleton instance
+            static Logger &getInstance();
 
             // Time series tracking methods
             template <typename T>
@@ -135,7 +130,7 @@ namespace insights
             std::string getSDCardPath() const;
             void setMinLogLevel(LogLevel level);
             void enableConsoleOutput(bool enable);
-            void enableFileOutput(bool enable);
+            void enableFileOutput(bool enable, bool clearExistingLogFile = true, bool clearExistingTimeSeriesFile = true);
             std::string getTimestamp() const;
             std::string logLevelToString(LogLevel level) const;
             void log(LogLevel level, const std::string &message, const char *file = nullptr, int line = -1);
@@ -152,10 +147,8 @@ namespace insights
             void clearFile(const std::string &filename);
             void clearLogFile();
             void clearTimeSeriesFile();
+            void initializeLogger(const std::string &sdCardPath, const std::string &timeSeriesFileName, bool enableFileOutput);
         };
-
-// REMOVE THIS LINE - It causes the multiple definition error
-// Logger* Logger::instance = nullptr;
 
 // Convenience macros for time series tracking (simplified API)
 #define TRACK_INT(name, getter, interval_ms) insights::logging::Logger::getInstance().trackValue<int>(name, getter, "", std::chrono::milliseconds(interval_ms))
